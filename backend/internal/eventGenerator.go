@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"github.com/gocarina/gocsv"
+	"github.com/zytan787/code-to-connect-2021/api"
 	"sort"
 	"strconv"
 	"strings"
@@ -441,15 +442,16 @@ func generateKey(party string, currency string, maturityDate string) string {
 	return fmt.Sprintf("%s_%s_%s", party, currency, maturityDate)
 }
 
-func (handler *MainHandler) GetProposalsAsCSV() (map[string]string, error) {
+func (handler *MainHandler) GetProposalsAsCSV() ([]api.Proposal, error) {
 	partyToProposals := make(map[string][]*Proposal)
 
 	for _, proposals := range handler.EventGenerator.KeyToProposals {
 		partyToProposals[proposals[0].Party] = append(partyToProposals[proposals[0].Party], proposals...)
 	}
 
-	result := make(map[string]string)
+	result := make([]api.Proposal, len(partyToProposals))
 
+	i := 0
 	for party, proposals := range partyToProposals {
 		sort.Slice(proposals, func(i, j int) bool {
 			indexI, _ := strconv.Atoi(proposals[i].TradeID[len(party):])
@@ -462,7 +464,12 @@ func (handler *MainHandler) GetProposalsAsCSV() (map[string]string, error) {
 			return nil, err
 		}
 
-		result[party] = base64.StdEncoding.EncodeToString(proposalsBytes)
+		proposalsString := base64.StdEncoding.EncodeToString(proposalsBytes)
+		result[i] = api.Proposal{
+			Party:    party,
+			Proposal: proposalsString,
+		}
+		i += 1
 	}
 
 	return result, nil

@@ -33,12 +33,14 @@ func (handler *MainHandler) CompressTrades(c *gin.Context) {
 		return
 	}
 
-	err := handler.LoadPortfolio(req.PartyATradesInput, req.MultiPartyTradesInput)
+	rawTrades, err := handler.DecodeInputFiles(req.InputFiles)
 	if err != nil {
-		resp.Error = fmt.Sprintf("Error in LoadPortfolio due to: %s", err.Error())
-		c.JSON(http.StatusInternalServerError, resp)
+		resp.Error = fmt.Sprintf("Error in DecodeInputFiles due to: %s", err.Error())
+		c.JSON(http.StatusBadRequest, resp)
 		return
 	}
+
+	handler.LoadPortfolio(rawTrades)
 
 	err = handler.GenerateCompressionResults()
 	if err != nil {

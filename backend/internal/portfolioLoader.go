@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"github.com/gocarina/gocsv"
+	"github.com/zytan787/code-to-connect-2021/api"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,37 +15,34 @@ type PortfolioLoader struct {
 	PartyToRawTrades               map[string][]*RawTrade
 	CcpTradeIDToCompressibleTrades map[string][]*Trade
 	//TODO one more field to keep track party -> trades?
-	ExcludedTrades                 []*RawTrade
+	ExcludedTrades []*RawTrade
 }
 
-func (handler *MainHandler) LoadPortfolio(partyATradesInput string, multiPartyTradesInput string) error {
-	partyATradesBytes, err := base64.StdEncoding.DecodeString(partyATradesInput)
-	if err != nil {
-		return err
+func (handler *MainHandler) DecodeInputFiles(inputFiles []api.File) ([]*RawTrade, error) {
+	result := make([]*RawTrade, 0)
+
+	var fileBytes []byte
+	var err error
+	for _, inputFile := range inputFiles {
+		fileBytes, err = base64.StdEncoding.DecodeString(inputFile.FileContent)
+		if err != nil {
+			return nil, fmt.Errorf("unable to decode the base64 string of file %s due to: %s", inputFile.FileName, err.Error())
+		}
+		trades := make([]*RawTrade, 0)
+		err = gocsv.UnmarshalBytes(fileBytes, &trades)
+		if err != nil {
+			return nil, fmt.Errorf("unable to unmarshal bytes into trades for file %s due to: %s, "+
+				"make sure your CSV file has the correct format", inputFile.FileName, err.Error())
+		}
+		result = append(result, trades...)
 	}
 
-	multiPartyTradesBytes, err := base64.StdEncoding.DecodeString(multiPartyTradesInput)
-	if err != nil {
-		return err
-	}
+	return result, nil
+}
 
-	var partyATrades []*RawTrade
-	err = gocsv.UnmarshalBytes(partyATradesBytes, &partyATrades)
-	if err != nil {
-		return err
-	}
-
-	var multiPartyTrades []*RawTrade
-	err = gocsv.UnmarshalBytes(multiPartyTradesBytes, &multiPartyTrades)
-	if err != nil {
-		return err
-	}
-
-	allTrades := append(partyATrades, multiPartyTrades...)
-	handler.PortfolioLoader.PartyToRawTrades = groupRawTradesByParty(allTrades)
+func (handler *MainHandler) LoadPortfolio(rawTrades []*RawTrade) {
+	handler.PortfolioLoader.PartyToRawTrades = groupRawTradesByParty(rawTrades)
 	handler.PortfolioLoader.categorizeRawTrades()
-
-	return nil
 }
 
 func groupRawTradesByParty(allRawTrades []*RawTrade) map[string][]*RawTrade {
