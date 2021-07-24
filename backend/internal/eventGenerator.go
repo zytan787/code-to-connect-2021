@@ -11,11 +11,11 @@ import (
 
 type EventGenerator struct {
 	NewCcpTradeIndex      uint32
-	PartyToNewTradeIndex map[string]uint32
-	KeyToProposals map[string][]*Proposal
+	PartyToNewTradeIndex  map[string]uint32
+	KeyToProposals        map[string][]*Proposal
 	CcpTradeIDToProposals map[string][]*Proposal
-	KeyToVisitState map[string]VisitState
-	KeyToNotional map[string]int
+	KeyToVisitState       map[string]VisitState
+	KeyToNotional         map[string]int
 	//TODO party to proposals?
 
 	//TODO create new struct to combine all key to ... maps
@@ -49,7 +49,6 @@ func (handler *MainHandler) GenerateProposals() error {
 		ccpTradeIDToProposals[ccpTradeID] = append(ccpTradeIDToProposals[ccpTradeID], proposal)
 		keyToVisitState[key] = NOT_VISITED
 
-
 		proposal = createNewProposalFromTrade(trades[1])
 		key = generateKeyFromTrade(trades[1], false)
 		keyToProposals[key] = append(keyToProposals[key], proposal)
@@ -69,7 +68,7 @@ func (handler *MainHandler) GenerateProposals() error {
 			if proposals, ok := keyToProposals[key]; ok {
 				for _, proposal = range proposals {
 					if proposal.PayOrReceive == compressionResult.PayOrReceive {
-						handler.EventGenerator.performSymmetricalAction(proposal.CCPTradeID, CANCEL)
+						handler.EventGenerator.changeActionType(proposal.CCPTradeID, CANCEL)
 					}
 				}
 			}
@@ -84,9 +83,47 @@ func (handler *MainHandler) GenerateProposals() error {
 	}
 	handler.EventGenerator.KeyToNotional = keyToNotional
 
+	//keys := make([]string, len(keyToProposals))
+	//i := 0
+	//for key, _ = range keyToProposals {
+	//	keys[i] = key
+	//	i++
+	//}
+	keysHasPrefixDefaultCPty := make([]string, 0, len(keyToProposals))
 	for key, _ = range keyToProposals {
-		if !strings.HasPrefix(key, DEFAULT_CPTY) {
+		if strings.HasPrefix(key, DEFAULT_CPTY) {
+			keysHasPrefixDefaultCPty = append(keysHasPrefixDefaultCPty, key)
+		} else {
 			handler.EventGenerator.tallyNotionalByKey(key)
+		}
+	}
+
+	var target int
+	var proposals, payingProposals, receivingProposals []*Proposal
+	for _, key = range keysHasPrefixDefaultCPty {
+		target = handler.EventGenerator.KeyToNotional[key]
+
+		proposals = handler.EventGenerator.KeyToProposals[key]
+		proposals = filterProposalsByActionType(proposals, ADD)
+
+		payingProposals = make([]*Proposal, 0, len(proposals))
+		receivingProposals = make([]*Proposal, 0, len(proposals))
+
+		for _, proposal = range proposals {
+			if proposal.PayOrReceive == "P" {
+				payingProposals = append(payingProposals, proposal)
+			} else if proposal.PayOrReceive == "R" {
+				receivingProposals = append(receivingProposals, proposal)
+			}
+		}
+
+		payingProposals = sortProposalsByNotional(payingProposals, true)
+		receivingProposals = sortProposalsByNotional(receivingProposals, true)
+
+		if target < 0 {
+			handler.EventGenerator.fixDifferenceRecursive(payingProposals, receivingProposals, uint64(abs(target)), "P", "")
+		} else if target > 0 {
+			handler.EventGenerator.fixDifferenceRecursive(payingProposals, receivingProposals, uint64(target), "R", "")
 		}
 	}
 
@@ -99,44 +136,119 @@ func (eventGenerator *EventGenerator) tallyNotionalByKey(key string) {
 	}
 
 	proposals := eventGenerator.KeyToProposals[key]
-	pendingProposals := getPendingProposals(proposals)
-
-	if len(pendingProposals) == 0 {
-		eventGenerator.KeyToVisitState[key] = VISITED
-		return
-	}
+	pendingProposals := filterProposalsByActionType(proposals, PENDING)
 
 	addedSum := sumAddedProposalsNotional(proposals)
 	target := eventGenerator.KeyToNotional[key] - addedSum
-	pendingProposals = sortProposalsByNotional(pendingProposals)
+	pendingProposals = sortProposalsByNotional(pendingProposals, false)
 	proposalsToKeep := findNSum(pendingProposals, target)
 
+	if target == 0 {
+		return
+	}
+
+	var payOrReceive string
 	if proposalsToKeep != nil {
 		for _, proposalToKeep := range proposalsToKeep {
-			eventGenerator.performSymmetricalAction(proposalToKeep.CCPTradeID, KEEP)
+			eventGenerator.changeActionType(proposalToKeep.CCPTradeID, KEEP)
 		}
-		proposalsToCancel := getPendingProposals(proposals)
+		proposalsToCancel := filterProposalsByActionType(proposals, PENDING)
 		for _, proposalToCancel := range proposalsToCancel {
-			eventGenerator.performSymmetricalAction(proposalToCancel.CCPTradeID, CANCEL)
+			eventGenerator.changeActionType(proposalToCancel.CCPTradeID, CANCEL)
 		}
 	} else {
 		for _, pendingProposal := range pendingProposals {
-			eventGenerator.performSymmetricalAction(pendingProposal.CCPTradeID, CANCEL)
+			eventGenerator.changeActionType(pendingProposal.CCPTradeID, CANCEL)
+		}
+
+		if target > 0 {
+			payOrReceive = "R"
+		} else {
+			payOrReceive = "P"
 		}
 
 		eventGenerator.addPairedProposalsForNewTrade(
-			pendingProposals[0].Party, pendingProposals[0].PayOrReceive, pendingProposals[0].Currency,
-			pendingProposals[0].MaturityDate, DEFAULT_CPTY, uint64(abs(target)))
+			proposals[0].Party, payOrReceive, proposals[0].Currency,
+			proposals[0].MaturityDate, DEFAULT_CPTY, uint64(abs(target)))
 	}
 
 	eventGenerator.KeyToVisitState[key] = VISITED
 	return
 }
 
-func (eventGenerator *EventGenerator) performSymmetricalAction(ccpTradeID string, action ActionType) {
-	for _, proposal := range eventGenerator.CcpTradeIDToProposals[ccpTradeID] {
-		proposal.Action = action
+func (eventGenerator *EventGenerator) fixDifferenceRecursive(payingProposals []*Proposal, receivingProposals []*Proposal, amount uint64, payOrReceive string, originalCPty string) {
+	if amount == 0 {
+		return
 	}
+
+	var eligibleProposals []*Proposal
+	if payOrReceive == "P" {
+		eligibleProposals = payingProposals
+	} else if payOrReceive == "R" {
+		eligibleProposals = receivingProposals
+	}
+
+	for i:=0; i<len(eligibleProposals); i++ {
+		if eligibleProposals[i].Notional >= amount {
+			remaining := eligibleProposals[i].Notional - amount
+			if len(originalCPty) > 0 {
+				eventGenerator.changeCPty(eligibleProposals[i].CCPTradeID, eligibleProposals[i].Cpty, originalCPty)
+			}
+			eventGenerator.changeNotional(eligibleProposals[i].CCPTradeID, amount)
+			originalCPty = eligibleProposals[i].Cpty
+			if payOrReceive == "P" {
+				eventGenerator.fixDifferenceRecursive(eligibleProposals[i+1:], receivingProposals, remaining, "R", originalCPty)
+			} else if payOrReceive == "R" {
+				eventGenerator.fixDifferenceRecursive(payingProposals, eligibleProposals[i+1:], remaining, "P", originalCPty)
+			}
+			return
+		} else {
+			amount -= eligibleProposals[i].Notional
+			if len(originalCPty) > 0 {
+				eventGenerator.changeCPty(eligibleProposals[i].CCPTradeID, eligibleProposals[i].Cpty, originalCPty)
+			}
+		}
+	}
+}
+
+func (eventGenerator *EventGenerator) changeActionType(ccpTradeID string, newActionType ActionType) {
+	for _, proposal := range eventGenerator.CcpTradeIDToProposals[ccpTradeID] {
+		proposal.Action = newActionType
+	}
+}
+
+func (eventGenerator *EventGenerator) changeNotional(ccpTradeID string, newNotional uint64) {
+	for _, proposal := range eventGenerator.CcpTradeIDToProposals[ccpTradeID] {
+		proposal.Notional = newNotional
+	}
+}
+
+func (eventGenerator *EventGenerator) changeCPty(ccpTradeID string, party string, newCpty string) {
+	newProposals := make([]*Proposal, 2)
+
+	for _, proposal := range eventGenerator.CcpTradeIDToProposals[ccpTradeID] {
+		if proposal.Party == party {
+			proposal.Cpty = newCpty
+			newProposals[0] = proposal
+		} else {
+			key := generateKey(proposal.Party, proposal.Currency, proposal.MaturityDate)
+			initialPartyProposals := eventGenerator.KeyToProposals[key]
+			for i := 0; i < len(initialPartyProposals); i++ {
+				if initialPartyProposals[i] == proposal {
+					eventGenerator.KeyToProposals[key] = append(initialPartyProposals[:i], initialPartyProposals[i+1:]...)
+					break
+				}
+			}
+			newProposal := eventGenerator.generateProposalForNewTrade(
+				newCpty, proposal.PayOrReceive, proposal.Currency,
+				proposal.MaturityDate, party, ccpTradeID, proposal.Notional)
+			newKey := generateKey(newProposal.Party, newProposal.Currency, newProposal.MaturityDate)
+			eventGenerator.KeyToProposals[newKey] = append(eventGenerator.KeyToProposals[newKey], newProposal)
+			newProposals[1] = newProposal
+		}
+	}
+
+	eventGenerator.CcpTradeIDToProposals[ccpTradeID] = newProposals
 }
 
 func (handler *MainHandler) prepareDetailsForNewTrades() {
@@ -163,7 +275,7 @@ func (handler *MainHandler) prepareDetailsForNewTrades() {
 	handler.EventGenerator.PartyToNewTradeIndex = partyToNewTradeIndex
 }
 
-func createNewProposalFromTrade(trade *Trade) *Proposal{
+func createNewProposalFromTrade(trade *Trade) *Proposal {
 	return &Proposal{
 		Party:        trade.Party,
 		Book:         trade.Book,
@@ -221,9 +333,9 @@ func findNSum(sortedProposals []*Proposal, target int) []*Proposal {
 		return nil
 	}
 
-	for i:=0; i<len(sortedProposals)-2; i++ {
+	for i := 0; i < len(sortedProposals)-2; i++ {
 		if i == 0 || (i > 0 && sortedProposals[i-1].Notional != sortedProposals[i].Notional) {
-			res := findNSum(sortedProposals[i+1:], target - getProposalNotionalAsInt(sortedProposals[i]))
+			res := findNSum(sortedProposals[i+1:], target-getProposalNotionalAsInt(sortedProposals[i]))
 			if res != nil {
 				return append(res, sortedProposals[i])
 			}
@@ -240,11 +352,11 @@ func getProposalNotionalAsInt(proposal *Proposal) int {
 	return int(proposal.Notional)
 }
 
-func getPendingProposals(proposals []*Proposal) []*Proposal {
+func filterProposalsByActionType(proposals []*Proposal, actionType ActionType) []*Proposal {
 	result := make([]*Proposal, 0, len(proposals))
 
 	for _, proposal := range proposals {
-		if proposal.Action == PENDING {
+		if proposal.Action == actionType {
 			result = append(result, proposal)
 		}
 	}
@@ -268,10 +380,16 @@ func sumAddedProposalsNotional(proposals []*Proposal) int {
 	return sum
 }
 
-func sortProposalsByNotional(proposals []*Proposal) []*Proposal {
-	sort.Slice(proposals, func(i, j int) bool {
-		return proposals[i].Notional < proposals[j].Notional
-	})
+func sortProposalsByNotional(proposals []*Proposal, descending bool) []*Proposal {
+	if descending {
+		sort.Slice(proposals, func(i, j int) bool {
+			return proposals[i].Notional > proposals[j].Notional
+		})
+	} else {
+		sort.Slice(proposals, func(i, j int) bool {
+			return proposals[i].Notional < proposals[j].Notional
+		})
+	}
 
 	return proposals
 }
@@ -284,11 +402,7 @@ func (eventGenerator *EventGenerator) addPairedProposalsForNewTrade(
 	proposal1 := eventGenerator.generateProposalForNewTrade(
 		party, payOrReceive, currency, maturityDate, cPty, ccpTradeID, notional)
 
-	if payOrReceive == "P" {
-		payOrReceive = "R"
-	} else {
-		payOrReceive = "P"
-	}
+	payOrReceive = getOppositePayOrReceive(payOrReceive)
 	proposal2 := eventGenerator.generateProposalForNewTrade(
 		cPty, payOrReceive, currency, maturityDate, party, ccpTradeID, notional)
 
@@ -359,4 +473,14 @@ func abs(x int) int {
 		return -x
 	}
 	return x
+}
+
+func getOppositePayOrReceive(payOrReceive string) string {
+	if payOrReceive == "P" {
+		return "R"
+	} else if payOrReceive == "R" {
+		return "P"
+	}
+
+	return ""
 }
