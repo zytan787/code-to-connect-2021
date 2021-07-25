@@ -12,13 +12,15 @@ import (
 )
 
 type PortfolioLoader struct {
-	PartyToRawTrades               map[string][]*RawTrade
+	//PartyToRawTrades               map[string][]*RawTrade
 	CcpTradeIDToCompressibleTrades map[string][]*Trade
 	//TODO one more field to keep track party -> trades?
-	ExcludedTrades []*RawTrade
+	ExcludedTrades []*ExcludedTrade
 }
 
 func (handler *MainHandler) DecodeInputFiles(inputFiles []api.File) ([]*RawTrade, error) {
+	gocsv.FailIfUnmatchedStructTags = true
+
 	result := make([]*RawTrade, 0)
 
 	var fileBytes []byte
@@ -41,8 +43,11 @@ func (handler *MainHandler) DecodeInputFiles(inputFiles []api.File) ([]*RawTrade
 }
 
 func (handler *MainHandler) LoadPortfolio(rawTrades []*RawTrade) {
-	handler.PortfolioLoader.PartyToRawTrades = groupRawTradesByParty(rawTrades)
-	handler.PortfolioLoader.categorizeRawTrades()
+	//handler.PortfolioLoader.PartyToRawTrades = groupRawTradesByParty(rawTrades)
+	ccpTradeIDToCompressibleTrades, excludedTrades := categorizeRawTrades(rawTrades)
+
+	handler.PortfolioLoader.CcpTradeIDToCompressibleTrades = ccpTradeIDToCompressibleTrades
+	handler.PortfolioLoader.ExcludedTrades = excludedTrades
 }
 
 func groupRawTradesByParty(allRawTrades []*RawTrade) map[string][]*RawTrade {
@@ -55,29 +60,27 @@ func groupRawTradesByParty(allRawTrades []*RawTrade) map[string][]*RawTrade {
 	return partyToRawTrades
 }
 
-func (portfolioLoader *PortfolioLoader) categorizeRawTrades() {
-	cleanTrades := make(map[string][]*Trade)
-	excludedTrades := make([]*RawTrade, 0)
+func categorizeRawTrades(rawTrades []*RawTrade) (ccpTradeIDToCompressibleTrades map[string][]*Trade, excludedTrades []*ExcludedTrade) {
+	tmpCleanTrades := make(map[string][]*Trade)
 
 	var cleanTrade *Trade
-	for _, rawTrades := range portfolioLoader.PartyToRawTrades {
-		for _, rawTrade := range rawTrades {
-			cleanTrade = portfolioLoader.cleanRawTrade(rawTrade)
-			if cleanTrade == nil {
-				excludedTrades = append(excludedTrades, rawTrade)
-			} else {
-				cleanTrades[rawTrade.CCPTradeID] = append(cleanTrades[rawTrade.CCPTradeID], cleanTrade)
-			}
+	var err error
+	for _, rawTrade := range rawTrades {
+		cleanTrade, err = cleanRawTrade(rawTrade)
+		if err == nil {
+			tmpCleanTrades[cleanTrade.CCPTradeID] = append(tmpCleanTrades[cleanTrade.CCPTradeID], cleanTrade)
+		} else {
+			excludedTrades = append(excludedTrades, createExcludedTradeFromRawTrade(rawTrade, err))
 		}
 	}
 
-	compressibleTrades := make(map[string][]*Trade)
+	ccpTradeIDToCompressibleTrades = make(map[string][]*Trade)
 	var compressible bool
-	for CCPTradeID, seenCleanTrades := range cleanTrades {
+	for CCPTradeID, seenCleanTrades := range tmpCleanTrades {
 		compressible = false
 
 		if len(seenCleanTrades) == 2 {
-			err := verifyPairedTrades(seenCleanTrades[0], seenCleanTrades[1])
+			err = verifyPairedTrades(seenCleanTrades[0], seenCleanTrades[1])
 			if err == nil {
 				compressible = true
 			}
@@ -85,12 +88,166 @@ func (portfolioLoader *PortfolioLoader) categorizeRawTrades() {
 		}
 
 		if compressible {
-			compressibleTrades[CCPTradeID] = seenCleanTrades
+			ccpTradeIDToCompressibleTrades[CCPTradeID] = seenCleanTrades
 		} else {
-			rawTrades := convertToRawTrades(seenCleanTrades)
-			excludedTrades = append(excludedTrades, rawTrades...)
+			if len(seenCleanTrades) == 1 {
+				excludedTrades = append(excludedTrades, createExcludedTradeFromCleanTrades(seenCleanTrades, "trade not submitted on both sides")...)
+			} else if len(seenCleanTrades) == 2 {
+				excludedTrades = append(excludedTrades, createExcludedTradeFromCleanTrades(seenCleanTrades, err.Error())...)
+			} else {
+				excludedTrades = append(excludedTrades, createExcludedTradeFromCleanTrades(seenCleanTrades, fmt.Sprintf("more than 2 trades have the same CCPTradeID: %s", CCPTradeID))...)
+			}
 		}
 	}
+	return
+}
+
+func verifyPairedTrades(trade1 *Trade, trade2 *Trade) error {
+	if trade1.PayOrReceive == trade2.PayOrReceive {
+		return fmt.Errorf("both trades with CCPTradeID=%s have PayOrReceive=%s",
+			trade1.CCPTradeID,
+			trade1.PayOrReceive)
+	}
+
+	if trade1.Notional != trade2.Notional {
+		return fmt.Errorf("trades with CCPTradeID=%s have different notionals: %d and %d",
+			trade1.CCPTradeID,
+			trade1.Notional,
+			trade2.Notional)
+	}
+
+	if trade1.Currency != trade2.Currency {
+		return fmt.Errorf("trades with CCPTradeID=%s have different currency: %s and %s",
+			trade1.CCPTradeID,
+			trade1.Currency,
+			trade2.Currency)
+	}
+
+	if !trade1.MaturityDate.Equal(trade2.MaturityDate) {
+		return fmt.Errorf("trades with CCPTradeID=%s have different MaturityDate: %s and %s",
+			trade1.CCPTradeID,
+			trade1.MaturityDate.Format(DATE_FORMAT),
+			trade2.MaturityDate.Format(DATE_FORMAT))
+	}
+
+	if trade1.Cpty != trade2.Party || trade2.Cpty != trade1.Party {
+		return fmt.Errorf("trades with CCPTradeID=%s counterparties do not match, trade1: Party=%s, Cpty=%s, trade2: Party=%s, Cpty=%s",
+			trade1.CCPTradeID,
+			trade1.Party, trade1.Cpty,
+			trade2.Party, trade2.Cpty)
+	}
+
+	return nil
+}
+
+func cleanRawTrade(rawTrade *RawTrade) (*Trade, error) {
+	errors := make([]string, 0)
+	emptyColumns := make([]string, 0)
+
+	party := strings.TrimSpace(rawTrade.Party)
+	if len(party) == 0 {
+		emptyColumns = append(emptyColumns, "Party")
+	}
+
+	book := strings.TrimSpace(rawTrade.Book)
+	if len(book) == 0 {
+		emptyColumns = append(emptyColumns, "Book")
+	}
+
+	tradeID := strings.TrimSpace(rawTrade.TradeID)
+	if len(tradeID) == 0 {
+		emptyColumns = append(emptyColumns, "TradeID")
+	}
+
+	currency := strings.TrimSpace(rawTrade.Currency)
+	if len(currency) == 0 {
+		emptyColumns = append(emptyColumns, "Currency")
+	}
+
+	cPty := strings.TrimSpace(rawTrade.Cpty)
+	if len(cPty) == 0 {
+		emptyColumns = append(emptyColumns, "Cpty")
+	}
+
+	ccpTradeID := strings.TrimSpace(rawTrade.CCPTradeID)
+	if len(ccpTradeID) == 0 {
+		emptyColumns = append(emptyColumns, "CCPTradeID")
+	}
+
+	if len(emptyColumns) == 1 {
+		errors = append(errors, fmt.Sprintf("%s is empty", emptyColumns[0]))
+	} else if len(emptyColumns) > 1 {
+		errors = append(errors, fmt.Sprintf("%s are empty", strings.Join(emptyColumns, ", ")))
+	}
+
+	notional, err := strconv.Atoi(rawTrade.Notional)
+	if err != nil {
+		errors = append(errors, fmt.Sprintf("Notional %s is not a valid integer", rawTrade.Notional))
+	}
+
+	if rawTrade.PayOrReceive != "P" && rawTrade.PayOrReceive != "R" {
+		errors = append(errors, fmt.Sprintf("PayOrReceive %s is neither 'P' or 'R'", rawTrade.PayOrReceive))
+	}
+
+	maturityDate, err := time.Parse(DATE_FORMAT, rawTrade.MaturityDate)
+	if err != nil {
+		errors = append(errors, fmt.Sprintf("fail to parse MaturityDate %s with format of YYYY/MM/DD (%s)", rawTrade.MaturityDate, DATE_FORMAT))
+	}
+
+	if len(errors) > 0 {
+		return nil, fmt.Errorf("%s", strings.Join(errors, "\n"))
+	}
+
+	return &Trade{
+		Party:        party,
+		Book:         book,
+		TradeID:      tradeID,
+		PayOrReceive: rawTrade.PayOrReceive,
+		Currency:     rawTrade.Currency,
+		MaturityDate: maturityDate,
+		Cpty:         cPty,
+		CCPTradeID:   ccpTradeID,
+		Notional:     uint64(notional),
+	}, nil
+}
+
+func createExcludedTradeFromRawTrade(rawTrade *RawTrade, err error) *ExcludedTrade {
+	return &ExcludedTrade{
+		Party:        rawTrade.Party,
+		Book:         rawTrade.Book,
+		TradeID:      rawTrade.TradeID,
+		PayOrReceive: rawTrade.PayOrReceive,
+		Currency:     rawTrade.Currency,
+		MaturityDate: rawTrade.MaturityDate,
+		Cpty:         rawTrade.Cpty,
+		CCPTradeID:   rawTrade.CCPTradeID,
+		Notional:     rawTrade.Notional,
+		Error:        err.Error(),
+	}
+}
+
+func createExcludedTradeFromCleanTrades(cleanTrades []*Trade, errorMessage string) []*ExcludedTrade {
+	excludedTrades := make([]*ExcludedTrade, len(cleanTrades))
+
+	for i := 0; i < len(cleanTrades); i++ {
+		excludedTrades[i] = &ExcludedTrade{
+			Party:        cleanTrades[i].Party,
+			Book:         cleanTrades[i].Book,
+			TradeID:      cleanTrades[i].TradeID,
+			PayOrReceive: cleanTrades[i].PayOrReceive,
+			Currency:     cleanTrades[i].Currency,
+			MaturityDate: cleanTrades[i].MaturityDate.Format(DATE_FORMAT),
+			Cpty:         cleanTrades[i].Cpty,
+			CCPTradeID:   cleanTrades[i].CCPTradeID,
+			Notional:     fmt.Sprintf("%d", cleanTrades[i].Notional),
+			Error:        errorMessage,
+		}
+	}
+	return excludedTrades
+}
+
+func (handler *MainHandler) GetExcludedTradesAsCSV() (string, error) {
+	excludedTrades := handler.PortfolioLoader.ExcludedTrades
 
 	sort.Slice(excludedTrades, func(i, j int) bool {
 		if excludedTrades[i].Party != excludedTrades[j].Party {
@@ -113,122 +270,7 @@ func (portfolioLoader *PortfolioLoader) categorizeRawTrades() {
 		return excludedTrades[i].TradeID < excludedTrades[j].TradeID
 	})
 
-	portfolioLoader.CcpTradeIDToCompressibleTrades = compressibleTrades
-	portfolioLoader.ExcludedTrades = excludedTrades
-}
-
-func verifyPairedTrades(trade1 *Trade, trade2 *Trade) error {
-	if trade1.PayOrReceive == trade2.PayOrReceive {
-		return fmt.Errorf("trades are not symmetrical, trade1 (Party:%s, TradeID:%s), trade2 (Party:%s, TradeID:%s): both %s",
-			trade1.Party, trade1.TradeID,
-			trade2.Party, trade2.TradeID,
-			trade1.PayOrReceive)
-	}
-
-	if trade1.Notional != trade2.Notional {
-		return fmt.Errorf("notionals are different, trade1 (Party:%s, TradeID:%s): %d, trade2 (Party:%s, TradeID:%s): %d",
-			trade1.Party, trade1.TradeID, trade1.Notional,
-			trade2.Party, trade2.TradeID, trade2.Notional)
-	}
-
-	if trade1.Currency != trade2.Currency {
-		return fmt.Errorf("currencies are different, trade1 (Party:%s, TradeID:%s): %s, trade2 (Party:%s, TradeID:%s): %s",
-			trade1.Party, trade1.TradeID, trade1.Currency,
-			trade2.Party, trade2.TradeID, trade2.Currency)
-	}
-
-	if !trade1.MaturityDate.Equal(trade2.MaturityDate) {
-		return fmt.Errorf("maturity dates are different, trade1 (Party:%s, TradeID:%s): %s, trade2 (Party:%s, TradeID:%s): %s",
-			trade1.Party, trade1.TradeID, trade1.MaturityDate.Format(DATE_FORMAT),
-			trade2.Party, trade2.TradeID, trade2.MaturityDate.Format(DATE_FORMAT))
-	}
-
-	if trade1.Cpty != trade2.Party || trade2.Cpty != trade1.Party {
-		return fmt.Errorf("counterparties do not match, trade1 (Party:%s, TradeID:%s): Cpty=%s, trade2 (Party:%s, TradeID:%s): Cpty=%s",
-			trade1.Party, trade1.TradeID, trade1.Cpty,
-			trade2.Party, trade2.TradeID, trade2.Cpty)
-	}
-
-	return nil
-}
-
-func (portfolioLoader *PortfolioLoader) cleanRawTrade(rawTrade *RawTrade) *Trade {
-	party := strings.TrimSpace(rawTrade.Party)
-	if len(party) == 0 {
-		return nil
-	}
-
-	book := strings.TrimSpace(rawTrade.Book)
-	if len(book) == 0 {
-		return nil
-	}
-
-	tradeID := strings.TrimSpace(rawTrade.TradeID)
-	if len(tradeID) == 0 {
-		return nil
-	}
-
-	if rawTrade.PayOrReceive != "P" && rawTrade.PayOrReceive != "R" {
-		return nil
-	}
-
-	//TODO check currency
-
-	maturityDate, err := time.Parse(DATE_FORMAT, rawTrade.MaturityDate)
-	if err != nil {
-		return nil
-	}
-
-	cPty := strings.TrimSpace(rawTrade.Cpty)
-	if len(cPty) == 0 {
-		return nil
-	}
-
-	ccpTradeID := strings.TrimSpace(rawTrade.CCPTradeID)
-	if len(ccpTradeID) == 0 {
-		return nil
-	}
-	//TODO check CCPTradeID format
-
-	notional, err := strconv.Atoi(rawTrade.Notional)
-	if err != nil {
-		return nil
-	}
-
-	return &Trade{
-		Party:        party,
-		Book:         book,
-		TradeID:      tradeID,
-		PayOrReceive: rawTrade.PayOrReceive,
-		Currency:     rawTrade.Currency,
-		MaturityDate: maturityDate,
-		Cpty:         cPty,
-		CCPTradeID:   ccpTradeID,
-		Notional:     uint64(notional),
-	}
-}
-
-func convertToRawTrades(cleanTrades []*Trade) []*RawTrade {
-	rawTrades := make([]*RawTrade, len(cleanTrades))
-
-	for i := 0; i < len(cleanTrades); i++ {
-		rawTrades[i] = &RawTrade{
-			Party:        cleanTrades[i].Party,
-			Book:         cleanTrades[i].Book,
-			TradeID:      cleanTrades[i].TradeID,
-			PayOrReceive: cleanTrades[i].PayOrReceive,
-			Currency:     cleanTrades[i].Currency,
-			MaturityDate: cleanTrades[i].MaturityDate.Format(DATE_FORMAT),
-			Cpty:         cleanTrades[i].Cpty,
-			CCPTradeID:   cleanTrades[i].CCPTradeID,
-			Notional:     fmt.Sprintf("%d", cleanTrades[i].Notional),
-		}
-	}
-	return rawTrades
-}
-
-func (handler *MainHandler) GetExcludedTradesAsCSV() (string, error) {
-	exclusion, err := gocsv.MarshalBytes(handler.PortfolioLoader.ExcludedTrades)
+	exclusion, err := gocsv.MarshalBytes(excludedTrades)
 	if err != nil {
 		return "", err
 	}

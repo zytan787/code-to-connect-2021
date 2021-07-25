@@ -64,21 +64,6 @@ func (handler *MainHandler) GenerateCompressionResults() error {
 		compressionResults = append(compressionResults, receiveCompressionResult)
 	}
 
-	sort.Slice(compressionResults, func(i, j int) bool {
-		if compressionResults[i].Party != compressionResults[j].Party {
-			return compressionResults[i].Party < compressionResults[j].Party
-		}
-		if compressionResults[i].Currency != compressionResults[j].Currency {
-			return compressionResults[i].Currency < compressionResults[j].Currency
-		}
-		if compressionResults[i].MaturityDate != compressionResults[j].MaturityDate {
-			timeI, _ := time.Parse(DATE_FORMAT, compressionResults[i].MaturityDate)
-			timeJ, _ := time.Parse(DATE_FORMAT, compressionResults[j].MaturityDate)
-			return timeI.Before(timeJ)
-		}
-		return compressionResults[i].PayOrReceive < compressionResults[j].PayOrReceive
-	})
-
 	handler.CompressionEngine.CompressionResults = compressionResults
 	return nil
 }
@@ -135,24 +120,6 @@ func (handler *MainHandler) GenerateBookLevelCompressionResults() error {
 		bookLevelCompressionResults = append(bookLevelCompressionResults, receiveCompressionResult)
 	}
 
-	sort.Slice(bookLevelCompressionResults, func(i, j int) bool {
-		if bookLevelCompressionResults[i].Party != bookLevelCompressionResults[j].Party {
-			return bookLevelCompressionResults[i].Party < bookLevelCompressionResults[j].Party
-		}
-		if bookLevelCompressionResults[i].Book != bookLevelCompressionResults[j].Book {
-			return bookLevelCompressionResults[i].Book < bookLevelCompressionResults[j].Book
-		}
-		if bookLevelCompressionResults[i].Currency != bookLevelCompressionResults[j].Currency {
-			return bookLevelCompressionResults[i].Currency < bookLevelCompressionResults[j].Currency
-		}
-		if bookLevelCompressionResults[i].MaturityDate != bookLevelCompressionResults[j].MaturityDate {
-			timeI, _ := time.Parse(DATE_FORMAT, bookLevelCompressionResults[i].MaturityDate)
-			timeJ, _ := time.Parse(DATE_FORMAT, bookLevelCompressionResults[j].MaturityDate)
-			return timeI.Before(timeJ)
-		}
-		return bookLevelCompressionResults[i].PayOrReceive < bookLevelCompressionResults[j].PayOrReceive
-	})
-
 	handler.CompressionEngine.BookLevelCompressionResults = bookLevelCompressionResults
 	return nil
 }
@@ -182,13 +149,18 @@ func (handler *MainHandler) getKeyToPayOrReceiveToTrades(bookLevel bool) map[str
 }
 
 func generateKeyFromTrade(trade *Trade, bookLevel bool) string {
+	key := fmt.Sprintf(KEY_FORMAT, trade.Party, trade.Currency, trade.MaturityDate.Format(DATE_FORMAT))
 	if bookLevel {
-		return fmt.Sprintf("%s_%s_%s_%s", trade.Party, trade.Currency, trade.MaturityDate.Format(DATE_FORMAT), trade.Book)
+		return fmt.Sprintf("%s_%s", key, trade.Book)
 	}
-	return fmt.Sprintf("%s_%s_%s", trade.Party, trade.Currency, trade.MaturityDate.Format(DATE_FORMAT))
+	return key
 }
 
 func generateCompressionRate(originalNotional, newNotional uint64) string {
+	if originalNotional == 0 {
+		return "100%"
+	}
+
 	compressionRate := (float64(originalNotional) - float64(newNotional)) / float64(originalNotional) * 100
 
 	if compressionRate == 100 {
@@ -213,7 +185,24 @@ func sumNotional(trades []*Trade) uint64 {
 }
 
 func (handler *MainHandler) GetCompressionReportAsCSV() (string, error) {
-	compressionResultsBytes, err := gocsv.MarshalBytes(handler.CompressionEngine.CompressionResults)
+	compressionResults := handler.CompressionEngine.CompressionResults
+
+	sort.Slice(compressionResults, func(i, j int) bool {
+		if compressionResults[i].Party != compressionResults[j].Party {
+			return compressionResults[i].Party < compressionResults[j].Party
+		}
+		if compressionResults[i].Currency != compressionResults[j].Currency {
+			return compressionResults[i].Currency < compressionResults[j].Currency
+		}
+		if compressionResults[i].MaturityDate != compressionResults[j].MaturityDate {
+			timeI, _ := time.Parse(DATE_FORMAT, compressionResults[i].MaturityDate)
+			timeJ, _ := time.Parse(DATE_FORMAT, compressionResults[j].MaturityDate)
+			return timeI.Before(timeJ)
+		}
+		return compressionResults[i].PayOrReceive < compressionResults[j].PayOrReceive
+	})
+
+	compressionResultsBytes, err := gocsv.MarshalBytes(compressionResults)
 	if err != nil {
 		return "", err
 	}
@@ -223,7 +212,27 @@ func (handler *MainHandler) GetCompressionReportAsCSV() (string, error) {
 }
 
 func (handler *MainHandler) GetCompressionReportBookLevelAsCSV() (string, error) {
-	bookLevelCompressionResultsBytes, err := gocsv.MarshalBytes(handler.CompressionEngine.BookLevelCompressionResults)
+	bookLevelCompressionResults := handler.CompressionEngine.BookLevelCompressionResults
+
+	sort.Slice(bookLevelCompressionResults, func(i, j int) bool {
+		if bookLevelCompressionResults[i].Party != bookLevelCompressionResults[j].Party {
+			return bookLevelCompressionResults[i].Party < bookLevelCompressionResults[j].Party
+		}
+		if bookLevelCompressionResults[i].Book != bookLevelCompressionResults[j].Book {
+			return bookLevelCompressionResults[i].Book < bookLevelCompressionResults[j].Book
+		}
+		if bookLevelCompressionResults[i].Currency != bookLevelCompressionResults[j].Currency {
+			return bookLevelCompressionResults[i].Currency < bookLevelCompressionResults[j].Currency
+		}
+		if bookLevelCompressionResults[i].MaturityDate != bookLevelCompressionResults[j].MaturityDate {
+			timeI, _ := time.Parse(DATE_FORMAT, bookLevelCompressionResults[i].MaturityDate)
+			timeJ, _ := time.Parse(DATE_FORMAT, bookLevelCompressionResults[j].MaturityDate)
+			return timeI.Before(timeJ)
+		}
+		return bookLevelCompressionResults[i].PayOrReceive < bookLevelCompressionResults[j].PayOrReceive
+	})
+
+	bookLevelCompressionResultsBytes, err := gocsv.MarshalBytes(bookLevelCompressionResults)
 	if err != nil {
 		return "", err
 	}

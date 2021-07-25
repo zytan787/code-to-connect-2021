@@ -26,6 +26,7 @@ import { compressTradesRequest } from "./api/compression/api";
 import { Base64 } from "js-base64";
 import JSZip from "jszip";
 import FileSaver from "file-saver";
+import { UploadFile } from "antd/es/upload/interface";
 
 type OutputFile = {
   key: string;
@@ -74,6 +75,17 @@ export default function Home() {
     } else if (info.file.status === "error") {
       message.error(`${info.file.name} file upload failed.`);
     }
+  };
+
+  const onRemove = (file: UploadFile) => {
+    const tmpInputFiles = inputFiles;
+    for (let i = 0; i < tmpInputFiles.length; i++) {
+      if (file.name === tmpInputFiles[i].file_name) {
+        tmpInputFiles.splice(i, 1);
+        break;
+      }
+    }
+    setInputFiles(tmpInputFiles);
   };
 
   useEffect(() => {
@@ -209,6 +221,7 @@ export default function Home() {
             beforeUpload={checkFileType}
             multiple={true}
             onChange={onUploadFileStatusChange}
+            onRemove={onRemove}
           >
             <Button icon={<UploadOutlined />}>Click to Upload</Button>
           </Upload>

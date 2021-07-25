@@ -8,6 +8,7 @@ export type InputFile = {
 };
 
 export type CompressTradesResp = {
+  request_id: string;
   exclusion: string;
   compression_report: string;
   compression_report_book_level: string;

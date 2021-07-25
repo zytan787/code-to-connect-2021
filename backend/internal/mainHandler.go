@@ -3,8 +3,11 @@ package internal
 import (
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/sirupsen/logrus"
 	"github.com/zytan787/code-to-connect-2021/api"
+	"github.com/zytan787/code-to-connect-2021/internal/toolkit"
 	"net/http"
+	"time"
 )
 
 type MainHandler struct {
@@ -24,6 +27,8 @@ func NewMainHandler() *MainHandler {
 }
 
 func (handler *MainHandler) CompressTrades(c *gin.Context) {
+	start := time.Now()
+
 	var req api.CompressTradesReq
 	var resp api.CompressTradesResp
 
@@ -33,10 +38,20 @@ func (handler *MainHandler) CompressTrades(c *gin.Context) {
 		return
 	}
 
+	if len(req.RequestID) <= 0 {
+		req.RequestID = toolkit.UniqueID()
+	}
+	resp.RequestID = req.RequestID
+
+	logger := logrus.WithFields(logrus.Fields{
+		"request_id": req.RequestID,
+	})
+
 	rawTrades, err := handler.DecodeInputFiles(req.InputFiles)
 	if err != nil {
 		resp.Error = fmt.Sprintf("Error in DecodeInputFiles due to: %s", err.Error())
 		c.JSON(http.StatusBadRequest, resp)
+		logger.Infof("Error in DecodeInputFiles due to: %s", err.Error())
 		return
 	}
 
@@ -46,6 +61,7 @@ func (handler *MainHandler) CompressTrades(c *gin.Context) {
 	if err != nil {
 		resp.Error = fmt.Sprintf("Error in GenerateCompressionResults due to: %s", err.Error())
 		c.JSON(http.StatusInternalServerError, resp)
+		logger.Infof("Error in GenerateCompressionResults due to: %s", err.Error())
 		return
 	}
 
@@ -53,6 +69,7 @@ func (handler *MainHandler) CompressTrades(c *gin.Context) {
 	if err != nil {
 		resp.Error = fmt.Sprintf("Error in GenerateProposals due to: %s", err.Error())
 		c.JSON(http.StatusInternalServerError, resp)
+		logger.Infof("Error in GenerateProposals due to: %s", err.Error())
 		return
 	}
 
@@ -60,6 +77,7 @@ func (handler *MainHandler) CompressTrades(c *gin.Context) {
 	if err != nil {
 		resp.Error = fmt.Sprintf("Error in CheckData due to: %s", err.Error())
 		c.JSON(http.StatusInternalServerError, resp)
+		logger.Infof("Error in CheckData due to: %s", err.Error())
 		return
 	}
 
@@ -67,6 +85,7 @@ func (handler *MainHandler) CompressTrades(c *gin.Context) {
 	if err != nil {
 		resp.Error = fmt.Sprintf("Error in GenerateBookLevelCompressionResults due to: %s", err.Error())
 		c.JSON(http.StatusInternalServerError, resp)
+		logger.Infof("Error in GenerateBookLevelCompressionResults due to: %s", err.Error())
 		return
 	}
 
@@ -74,6 +93,7 @@ func (handler *MainHandler) CompressTrades(c *gin.Context) {
 	if err != nil {
 		resp.Error = fmt.Sprintf("Error in GetExcludedTradesAsCSV due to: %s", err.Error())
 		c.JSON(http.StatusInternalServerError, resp)
+		logger.Infof("Error in GetExcludedTradesAsCSV due to: %s", err.Error())
 		return
 	}
 	resp.Exclusion = exclusionCSV
@@ -82,6 +102,7 @@ func (handler *MainHandler) CompressTrades(c *gin.Context) {
 	if err != nil {
 		resp.Error = fmt.Sprintf("Error in GetCompressionReportAsCSV due to: %s", err.Error())
 		c.JSON(http.StatusInternalServerError, resp)
+		logger.Infof("Error in GetCompressionReportAsCSV due to: %s", err.Error())
 		return
 	}
 	resp.CompressionReport = compressionReport
@@ -90,6 +111,7 @@ func (handler *MainHandler) CompressTrades(c *gin.Context) {
 	if err != nil {
 		resp.Error = fmt.Sprintf("Error in GetCompressionReportBookLevelAsCSV due to: %s", err.Error())
 		c.JSON(http.StatusInternalServerError, resp)
+		logger.Infof("Error in GetCompressionReportBookLevelAsCSV due to: %s", err.Error())
 		return
 	}
 	resp.CompressionReportBookLevel = compressionReportBookLevel
@@ -98,6 +120,7 @@ func (handler *MainHandler) CompressTrades(c *gin.Context) {
 	if err != nil {
 		resp.Error = fmt.Sprintf("Error in GetProposalsAsCSV due to: %s", err.Error())
 		c.JSON(http.StatusInternalServerError, resp)
+		logger.Infof("Error in GetProposalsAsCSV due to: %s", err.Error())
 		return
 	}
 	resp.Proposals = proposals
@@ -106,9 +129,13 @@ func (handler *MainHandler) CompressTrades(c *gin.Context) {
 	if err != nil {
 		resp.Error = fmt.Sprintf("Error in GetDataCheckResultsAsCSV due to: %s", err.Error())
 		c.JSON(http.StatusInternalServerError, resp)
+		logger.Infof("Error in GetProposalsAsCSV due to: %s", err.Error())
 		return
 	}
 	resp.DataCheck = dataCheckResults
 
 	c.JSON(http.StatusOK, resp)
+
+	elapsed := time.Since(start)
+	logger.Infof("Took %s", elapsed)
 }

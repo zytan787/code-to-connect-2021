@@ -5,7 +5,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"github.com/zytan787/code-to-connect-2021/internal"
-	"log"
 	"os"
 	"time"
 )
@@ -31,9 +30,6 @@ func main() {
 }
 
 func startCompressTrades(c *gin.Context) {
-	start := time.Now()
 	mainHandler := internal.NewMainHandler()
 	mainHandler.CompressTrades(c)
-	elapsed := time.Since(start)
-	log.Printf("Took %s", elapsed)
 }

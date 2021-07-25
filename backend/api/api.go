@@ -1,6 +1,7 @@
 package api
 
 type CompressTradesReq struct {
+	RequestID string `json:"request_id,omitempty"`
 	InputFiles []File `json:"input_files"`
 }
 
@@ -9,8 +10,8 @@ type File struct {
 	FileContent string `json:"file_content"`
 }
 
-//TODO change all to file
 type CompressTradesResp struct {
+	RequestID string 	`json:"request_id"`
 	Exclusion                  string     `json:"exclusion"`
 	CompressionReport          string     `json:"compression_report"`
 	CompressionReportBookLevel string     `json:"compression_report_book_level"`
