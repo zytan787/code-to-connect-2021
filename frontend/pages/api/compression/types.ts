@@ -14,10 +14,19 @@ export type CompressTradesResp = {
   compression_report_book_level: string;
   proposals: Proposal[];
   data_check: string;
+  statistics: Statistic[];
   error?: string;
 };
 
 export type Proposal = {
   party: string;
   proposal: string;
+};
+
+export type Statistic = {
+  party: string;
+  original_notional: number;
+  new_notional: number;
+  original_no_of_trades: number;
+  new_no_of_trades: number;
 };

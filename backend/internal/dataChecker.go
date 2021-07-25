@@ -3,6 +3,7 @@ package internal
 import (
 	"encoding/base64"
 	"github.com/gocarina/gocsv"
+	"github.com/zytan787/code-to-connect-2021/api"
 	"sort"
 )
 
@@ -47,6 +48,40 @@ func (handler *MainHandler) CheckData() error {
 
 	handler.DataChecker.PartyToDataCheckResult = partyToDataCheckResult
 	return nil
+}
+
+func (handler *MainHandler) GetStatistics() []api.Statistic {
+	partyToOriginalTradeCount := make(map[string]uint64)
+	partyToNewTradeCount := make(map[string]uint64)
+	for _, proposals := range handler.EventGenerator.KeyToProposals {
+		for _, proposal := range proposals {
+			if proposal.Action != ADD {
+				partyToOriginalTradeCount[proposal.Party]++
+			} else {
+				partyToNewTradeCount[proposal.Party]++
+			}
+		}
+	}
+
+	result := make([]api.Statistic, len(handler.DataChecker.PartyToDataCheckResult))
+
+	i := 0
+	for party, dataCheckResult := range handler.DataChecker.PartyToDataCheckResult {
+		result[i] = api.Statistic{
+			Party:              party,
+			OriginalNotional:   dataCheckResult.OriginalNotional,
+			NewNotional:        dataCheckResult.Notional,
+			OriginalNoOfTrades: partyToOriginalTradeCount[party],
+			NewNoOfTrades:      partyToNewTradeCount[party],
+		}
+		i++
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Party < result[j].Party
+	})
+
+	return result
 }
 
 func (handler *MainHandler) GetDataCheckResultsAsCSV() (string, error) {

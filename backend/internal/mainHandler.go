@@ -27,13 +27,17 @@ func NewMainHandler() *MainHandler {
 }
 
 func (handler *MainHandler) CompressTrades(c *gin.Context) {
-	start := time.Now()
-
 	var req api.CompressTradesReq
 	var resp api.CompressTradesResp
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		resp.Error = err.Error()
+		c.JSON(http.StatusBadRequest, resp)
+		return
+	}
+
+	if len(req.InputFiles) == 0 {
+		resp.Error = "input_files array has 0 element"
 		c.JSON(http.StatusBadRequest, resp)
 		return
 	}
@@ -47,6 +51,8 @@ func (handler *MainHandler) CompressTrades(c *gin.Context) {
 		"request_id": req.RequestID,
 	})
 
+	loadPortfolioStart := time.Now()
+
 	rawTrades, err := handler.DecodeInputFiles(req.InputFiles)
 	if err != nil {
 		resp.Error = fmt.Sprintf("Error in DecodeInputFiles due to: %s", err.Error())
@@ -57,6 +63,11 @@ func (handler *MainHandler) CompressTrades(c *gin.Context) {
 
 	handler.LoadPortfolio(rawTrades)
 
+	loadPortfolioDuration := time.Since(loadPortfolioStart)
+	logger.Infof("Done loading portfolio, took %s", loadPortfolioDuration)
+
+	compressionEngineStart := time.Now()
+
 	err = handler.GenerateCompressionResults()
 	if err != nil {
 		resp.Error = fmt.Sprintf("Error in GenerateCompressionResults due to: %s", err.Error())
@@ -65,6 +76,11 @@ func (handler *MainHandler) CompressTrades(c *gin.Context) {
 		return
 	}
 
+	compressionEngineDuration := time.Since(compressionEngineStart)
+	logger.Infof("Done generating compression report, took %s", compressionEngineDuration)
+
+	eventGeneratorStart := time.Now()
+
 	err = handler.GenerateProposals()
 	if err != nil {
 		resp.Error = fmt.Sprintf("Error in GenerateProposals due to: %s", err.Error())
@@ -72,6 +88,9 @@ func (handler *MainHandler) CompressTrades(c *gin.Context) {
 		logger.Infof("Error in GenerateProposals due to: %s", err.Error())
 		return
 	}
+
+	eventGeneratorDuration := time.Since(eventGeneratorStart)
+	logger.Infof("Done generating proposals, took %s", eventGeneratorDuration)
 
 	err = handler.CheckData()
 	if err != nil {
@@ -134,8 +153,8 @@ func (handler *MainHandler) CompressTrades(c *gin.Context) {
 	}
 	resp.DataCheck = dataCheckResults
 
-	c.JSON(http.StatusOK, resp)
+	statistics := handler.GetStatistics()
+	resp.Statistics = statistics
 
-	elapsed := time.Since(start)
-	logger.Infof("Took %s", elapsed)
+	c.JSON(http.StatusOK, resp)
 }

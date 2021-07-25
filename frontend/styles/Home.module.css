@@ -1,11 +1,10 @@
 .container {
   min-height: 100vh;
-  padding: 0 0.5rem;
+  padding: 1rem 1rem;
   display: flex;
   flex-direction: column;
-  /*justify-content: center;*/
+  justify-content: center;
   /*align-items: center;*/
-  height: 100vh;
 }
 
 .main {
@@ -118,4 +117,11 @@
     width: 100%;
     flex-direction: column;
   }
+}
+
+.area {
+  min-height: 50vh;
+  background-color: #e6fffb;
+  padding: 1em;
+  /*border-radius: 2em;*/
 }

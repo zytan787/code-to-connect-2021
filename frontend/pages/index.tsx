@@ -12,11 +12,14 @@ import {
   Spin,
   Tree,
   Result,
+  Statistic,
 } from "antd";
 import {
-  UploadOutlined,
+  ArrowUpOutlined,
+  ArrowDownOutlined,
   SendOutlined,
   DownloadOutlined,
+  InboxOutlined,
 } from "@ant-design/icons";
 import { RcFile, UploadChangeParam } from "antd/es/upload";
 import { useEffect, useMemo, useState } from "react";
@@ -27,6 +30,9 @@ import { Base64 } from "js-base64";
 import JSZip from "jszip";
 import FileSaver from "file-saver";
 import { UploadFile } from "antd/es/upload/interface";
+import { Bar } from "react-chartjs-2";
+
+const { Dragger } = Upload;
 
 type OutputFile = {
   key: string;
@@ -39,13 +45,13 @@ export default function Home() {
   const [checkedKeys, setCheckedKeys] = useState<string[] | undefined>(
     undefined
   );
+  const [sentCompressRequest, setSentCompressRequest] = useState(false);
 
   const { data, error, loading, run } = useRequest(compressTradesRequest);
 
   const sendCompressTradesRequest = () => {
-    if (inputFiles.length > 0) {
-      run({ input_files: inputFiles });
-    }
+    run({ input_files: inputFiles });
+    setSentCompressRequest(true);
   };
 
   const checkFileType = (file: RcFile): string => {
@@ -133,11 +139,15 @@ export default function Home() {
   const treeData = useMemo(() => {
     if (data !== undefined && data.error === undefined) {
       const proposals = [];
+      const initialCheckedKeys = [];
       for (let i = 0; i < data.proposals.length; i++) {
         proposals.push({
           title: `party_${data.proposals[i].party}_proposal.csv`,
           key: `party_${data.proposals[i].party}_proposal.csv`,
         });
+        initialCheckedKeys.push(
+          `party_${data.proposals[i].party}_proposal.csv`
+        );
       }
 
       const compare = (a: any, b: any) => {
@@ -151,6 +161,14 @@ export default function Home() {
       };
 
       proposals.sort(compare);
+
+      initialCheckedKeys.push("exclusion.csv");
+      initialCheckedKeys.push("compression_report.csv");
+      initialCheckedKeys.push("compression_report_bookLevel.csv");
+      initialCheckedKeys.push("data_check.csv");
+
+      setCheckedKeys(initialCheckedKeys);
+
       return [
         {
           title: "all",
@@ -171,6 +189,137 @@ export default function Home() {
       return undefined;
     }
   }, [data]);
+
+  const notionalPercentage = useMemo(() => {
+    if (data !== undefined && data.error === undefined) {
+      let originalTotalNotional = 0;
+      let newTotalNotional = 0;
+
+      for (let i = 0; i < data.statistics.length; i++) {
+        originalTotalNotional += data.statistics[i].original_notional;
+        newTotalNotional += data.statistics[i].new_notional;
+      }
+
+      const percentage =
+        ((originalTotalNotional - newTotalNotional) / originalTotalNotional) *
+        100;
+
+      return percentage;
+    } else {
+      return undefined;
+    }
+  }, [data]);
+
+  const tradeCountPercentage = useMemo(() => {
+    if (data !== undefined && data.error === undefined) {
+      let originalTradeCount = 0;
+      let newTradeCount = 0;
+
+      for (let i = 0; i < data.statistics.length; i++) {
+        originalTradeCount += data.statistics[i].original_no_of_trades;
+        newTradeCount += data.statistics[i].new_no_of_trades;
+      }
+
+      const percentage =
+        ((originalTradeCount - newTradeCount) / originalTradeCount) * 100;
+
+      return percentage;
+    } else {
+      return undefined;
+    }
+  }, [data]);
+
+  const notionalStatisticsData = useMemo(() => {
+    if (data !== undefined && data.error === undefined) {
+      const labels = [];
+      const originalNotionals = [];
+      const notionals = [];
+      for (let i = 0; i < data.statistics.length; i++) {
+        labels.push(data.statistics[i].party);
+        originalNotionals.push(data.statistics[i].original_notional);
+        notionals.push(data.statistics[i].new_notional);
+      }
+
+      const datasets = [];
+      datasets.push({
+        label: "Original Notional",
+        backgroundColor: "#d3f261",
+        data: originalNotionals,
+      });
+      datasets.push({
+        label: "New Notional",
+        backgroundColor: "#87e8de",
+        data: notionals,
+      });
+
+      return {
+        labels: labels,
+        datasets: datasets,
+      };
+    } else {
+      return undefined;
+    }
+  }, [data]);
+
+  const notionalBarChartOptions = {
+    indexAxis: "y",
+    responsive: true,
+    plugins: {
+      legend: {
+        position: "top",
+      },
+      title: {
+        display: true,
+        text: "Notional",
+      },
+    },
+  };
+
+  const tradeCountStatisticsData = useMemo(() => {
+    if (data !== undefined && data.error === undefined) {
+      const labels = [];
+      const originalTradeCounts = [];
+      const newTradeCounts = [];
+      for (let i = 0; i < data.statistics.length; i++) {
+        labels.push(data.statistics[i].party);
+        originalTradeCounts.push(data.statistics[i].original_no_of_trades);
+        newTradeCounts.push(data.statistics[i].new_no_of_trades);
+      }
+
+      const datasets = [];
+      datasets.push({
+        label: "Original Trade Count",
+        backgroundColor: "#d3f261",
+        data: originalTradeCounts,
+      });
+      datasets.push({
+        label: "New Trade Count",
+        backgroundColor: "#87e8de",
+        data: newTradeCounts,
+      });
+
+      return {
+        labels: labels,
+        datasets: datasets,
+      };
+    } else {
+      return undefined;
+    }
+  }, [data]);
+
+  const tradeCountBarChartOptions = {
+    indexAxis: "y",
+    responsive: true,
+    plugins: {
+      legend: {
+        position: "top",
+      },
+      title: {
+        display: true,
+        text: "Trade Count",
+      },
+    },
+  };
 
   const onCheck = (
     checked: React.Key[] | { checked: React.Key[]; halfChecked: React.Key[] },
@@ -205,26 +354,49 @@ export default function Home() {
         <link rel="icon" href="/favicon.ico" />
       </Head>
 
-      <h1 className={styles.title}>
-        Welcome to <a href="https://nextjs.org">Next.js!</a>
-      </h1>
+      <h2 className={styles.title}>Trade Compressor</h2>
 
-      <p className={styles.description}>
-        Get started by editing{" "}
-        <code className={styles.code}>pages/index.js</code>
-      </p>
-
-      <Row gutter={16}>
-        <Col span={10} style={{ textAlign: "center" }}>
-          <h2>Input</h2>
-          <Upload
-            beforeUpload={checkFileType}
-            multiple={true}
-            onChange={onUploadFileStatusChange}
-            onRemove={onRemove}
-          >
-            <Button icon={<UploadOutlined />}>Click to Upload</Button>
-          </Upload>
+      <Row
+        gutter={16}
+        justify={"center"}
+        style={{
+          marginTop: "5em",
+          textAlign: "center",
+        }}
+      >
+        <Col span={8} style={{ textAlign: "center" }}>
+          <div className={styles.area}>
+            <h2>Input</h2>
+            <Row justify={"center"}>
+              <Col span={20}>
+                <Dragger
+                  beforeUpload={checkFileType}
+                  multiple={true}
+                  onChange={onUploadFileStatusChange}
+                  onRemove={onRemove}
+                >
+                  <p className="ant-upload-drag-icon">
+                    <InboxOutlined />
+                  </p>
+                  <p className="ant-upload-text">
+                    Click or drag file to this area to upload
+                  </p>
+                  <p className="ant-upload-hint">
+                    Support for a single or bulk upload. Strictly prohibit from
+                    uploading company data or other band files
+                  </p>
+                </Dragger>
+              </Col>
+            </Row>
+          </div>
+          {/*<Upload*/}
+          {/*  beforeUpload={checkFileType}*/}
+          {/*  multiple={true}*/}
+          {/*  onChange={onUploadFileStatusChange}*/}
+          {/*  onRemove={onRemove}*/}
+          {/*>*/}
+          {/*  <Button icon={<UploadOutlined />}>Click to Upload</Button>*/}
+          {/*</Upload>*/}
         </Col>
         <Col span={4}>
           <Button
@@ -236,50 +408,140 @@ export default function Home() {
             Compress Trades
           </Button>
         </Col>
-        <Col span={10} style={{ textAlign: "center" }}>
-          <h2>Output</h2>
-          {loading && <Spin tip="Compressing..." />}
-          {!loading && error !== undefined && (
-            <Result
-              status="error"
-              title={`${error.name}: ${error.message}`}
-              subTitle={data?.error}
-            />
-          )}
-          {!loading && error === undefined && treeData !== undefined && (
-            <>
-              <Tree
-                checkable={true}
-                defaultExpandAll={true}
-                onCheck={onCheck}
-                checkedKeys={checkedKeys}
-                treeData={treeData}
+        <Col span={8} style={{ textAlign: "center" }}>
+          <div className={styles.area}>
+            <h2>Output</h2>
+            {loading && <Spin tip="Compressing..." />}
+            {sentCompressRequest && !loading && error !== undefined && (
+              <Result
+                status="error"
+                subTitle={error.message}
+                // subTitle={data?.error}
               />
-              <Button
-                type="primary"
-                icon={<DownloadOutlined />}
-                onClick={downloadOutputFiles}
-                disabled={checkedKeys === undefined || checkedKeys.length === 0}
-              >
-                Download
-              </Button>
-            </>
-          )}
+            )}
+            {sentCompressRequest &&
+              !loading &&
+              error === undefined &&
+              treeData !== undefined && (
+                <>
+                  <p>Select files to download:</p>
+                  <Tree
+                    checkable={true}
+                    defaultExpandAll={true}
+                    onCheck={onCheck}
+                    checkedKeys={checkedKeys}
+                    treeData={treeData}
+                    style={{ backgroundColor: "#e6fffb", marginBottom: "1em" }}
+                  />
+                  <Button
+                    type="primary"
+                    icon={<DownloadOutlined />}
+                    onClick={downloadOutputFiles}
+                    disabled={
+                      checkedKeys === undefined || checkedKeys.length === 0
+                    }
+                  >
+                    Download
+                  </Button>
+                </>
+              )}
+          </div>
         </Col>
       </Row>
 
-      <footer className={styles.footer}>
-        <a
-          href="https://vercel.com?utm_source=create-next-app&utm_medium=default-template&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Powered by{" "}
-          <span className={styles.logo}>
-            <Image src="/vercel.svg" alt="Vercel Logo" width={72} height={16} />
-          </span>
-        </a>
-      </footer>
+      <br />
+      {!loading && notionalStatisticsData !== undefined && (
+        <>
+          <h2 style={{ textAlign: "center" }}>Statistics</h2>
+          <Row justify={"center"}>
+            {notionalPercentage !== undefined && (
+              <Col span={8} style={{ textAlign: "right" }}>
+                <Statistic
+                  title="Notional"
+                  value={
+                    notionalPercentage > 0
+                      ? notionalPercentage
+                      : -notionalPercentage
+                  }
+                  precision={2}
+                  valueStyle={{
+                    color: notionalPercentage > 0 ? "#3f8600" : "#cf1322",
+                  }}
+                  prefix={
+                    notionalPercentage > 0 ? (
+                      <ArrowDownOutlined />
+                    ) : (
+                      <ArrowUpOutlined />
+                    )
+                  }
+                  suffix="%"
+                />
+              </Col>
+            )}
+            {tradeCountPercentage !== undefined && (
+              <Col offset={2} span={8}>
+                <Statistic
+                  title="Trade Count"
+                  value={
+                    tradeCountPercentage > 0
+                      ? tradeCountPercentage
+                      : -tradeCountPercentage
+                  }
+                  precision={2}
+                  valueStyle={{
+                    color: tradeCountPercentage > 0 ? "#3f8600" : "#cf1322",
+                  }}
+                  prefix={
+                    tradeCountPercentage > 0 ? (
+                      <ArrowDownOutlined />
+                    ) : (
+                      <ArrowUpOutlined />
+                    )
+                  }
+                  suffix="%"
+                />
+              </Col>
+            )}
+          </Row>
+          <br />
+          <Row justify={"center"}>
+            <Col span={16}>
+              <Bar
+                data={notionalStatisticsData}
+                options={notionalBarChartOptions}
+              />
+            </Col>
+          </Row>
+          <br />
+          <br />
+          <Row justify={"center"}>
+            <Col span={16}>
+              <Bar
+                data={tradeCountStatisticsData}
+                options={tradeCountBarChartOptions}
+              />
+            </Col>
+          </Row>
+        </>
+      )}
+
+      {/*<footer className={styles.footer}>*/}
+      {/*  <a*/}
+      {/*    href="https://bankcampuscareers.tal.net/vx/mobile-0/brand-0/candidate/so/pm/1/pl/2/opp/7182-APAC-Code-to-Connect-2021/en-GB"*/}
+      {/*    target="_blank"*/}
+      {/*    rel="noopener noreferrer"*/}
+      {/*  >*/}
+      {/*    <span className={styles.logo}>*/}
+      {/*      <Image*/}
+      {/*        src="/boa.png"*/}
+      {/*        alt="Bank of America Logo"*/}
+      {/*        width={16}*/}
+      {/*        height={16}*/}
+      {/*      />*/}
+      {/*    </span>*/}
+      {/*    FICC - Code to Connect 2021*/}
+      {/*  </a>*/}
+      {/*</footer>*/}
     </div>
   );
 }
