@@ -6,7 +6,7 @@ export const postRequest = async <Req, Resp>(
   const response: Response = await fetch(
     //TODO use env var
     // `${process.env.NEXT_PUBLIC_BACKEND_HOST}${endpoint}`,
-    `http://localhost:8080${endpoint}`,
+    `${process.env.BACKEND_HOST}${endpoint}`,
     { method: "POST", body }
   );
 

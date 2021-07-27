@@ -3,6 +3,7 @@ package internal
 import (
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/gocarina/gocsv"
 	"github.com/sirupsen/logrus"
 	"github.com/zytan787/code-to-connect-2021/api"
 	"github.com/zytan787/code-to-connect-2021/internal/toolkit"
@@ -18,6 +19,8 @@ type MainHandler struct {
 }
 
 func NewMainHandler() *MainHandler {
+	gocsv.FailIfUnmatchedStructTags = true
+
 	return &MainHandler{
 		PortfolioLoader:   &PortfolioLoader{},
 		CompressionEngine: &CompressionEngine{},

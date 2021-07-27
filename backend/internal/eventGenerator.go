@@ -12,21 +12,12 @@ import (
 )
 
 type EventGenerator struct {
-	//NewCcpTradeIndex      uint32
-	//PartyToNewTradeIndex  map[string]uint32
-	KeyToProposals               map[string][]*Proposal
-	CcpTradeIDToProposals        map[string][]*Proposal
-	KeyToNotional                map[string]int
-	KeyToDefaultBook             map[string]string
-	KeyWithoutPartyToDefaultCPty map[string]string
-	//TODO party to proposals?
-
-	//TODO create new struct to combine all key to ... maps
+	KeyToProposals        map[string][]*Proposal
+	CcpTradeIDToProposals map[string][]*Proposal
+	KeyToDefaultBook      map[string]string
 }
 
 func (handler *MainHandler) GenerateProposals() error {
-	//handler.prepareDetailsForNewTrades()
-
 	// create proposal for each compressible trade
 	keyToProposals := make(map[string][]*Proposal)
 	ccpTradeIDToProposals := make(map[string][]*Proposal)
@@ -63,22 +54,13 @@ func (handler *MainHandler) GenerateProposals() error {
 	handler.EventGenerator.KeyToProposals = keyToProposals
 	handler.EventGenerator.CcpTradeIDToProposals = ccpTradeIDToProposals
 	handler.EventGenerator.KeyToDefaultBook = keyToDefaultBook
-	handler.EventGenerator.KeyWithoutPartyToDefaultCPty = keyWithoutPartyToDefaultCPty
 
-	// cancel trades with compression type = Termination
+	// retrieve required notional for each key
 	keyToNotional := make(map[string]int)
 	var notional int
 	for _, compressionResult := range handler.CompressionEngine.CompressionResults {
 		key = fmt.Sprintf(KEY_FORMAT, compressionResult.Party, compressionResult.Currency, compressionResult.MaturityDate)
-		if compressionResult.CompressionType == TERMINATION {
-			if proposals, ok := keyToProposals[key]; ok {
-				for _, proposal = range proposals {
-					if proposal.PayOrReceive == compressionResult.PayOrReceive {
-						handler.EventGenerator.changeActionType(proposal.CCPTradeID, CANCEL)
-					}
-				}
-			}
-		} else {
+		if compressionResult.CompressionType != TERMINATION {
 			notional, _ = strconv.Atoi(compressionResult.Notional)
 			if compressionResult.PayOrReceive == "P" {
 				keyToNotional[key] = -notional
@@ -87,24 +69,36 @@ func (handler *MainHandler) GenerateProposals() error {
 			}
 		}
 	}
-	handler.EventGenerator.KeyToNotional = keyToNotional
 
-	// minimize number of trades
+	// add minimum number of trades
 	var splitKey []string
+	var party, payOrReceive, defaultCPty, currency, maturityDate string
 	for key, _ = range keyToProposals {
 		splitKey = strings.Split(key, "_")
-		keyWithoutParty = strings.Join(splitKey[len(splitKey)-2:], "_") // for cases where party name contains "_"
-		if keyWithoutPartyToDefaultCPty[keyWithoutParty] != strings.Join(splitKey[:len(splitKey)-2], "_") {
-			handler.EventGenerator.minimizeNoOfTrades(key)
+		keyWithoutParty = strings.Join(splitKey[len(splitKey)-2:], "_")
+		party = strings.Join(splitKey[:len(splitKey)-2], "_") // for cases where party name contains "_"
+		if keyWithoutPartyToDefaultCPty[keyWithoutParty] != party {
+			if keyToNotional[key] > 0 {
+				payOrReceive = "R"
+			} else {
+				payOrReceive = "P"
+			}
+
+			defaultCPty = keyWithoutPartyToDefaultCPty[keyWithoutParty]
+			currency = splitKey[len(splitKey)-2]
+			maturityDate = splitKey[len(splitKey)-1]
+			handler.EventGenerator.addPairedProposalsForNewTrade(
+				party, payOrReceive, currency,
+				maturityDate, defaultCPty, uint64(abs(keyToNotional[key])))
 		}
 	}
 
-	// minimize notional
+	// minimize total notional
 	var target int
 	var proposals, payingProposals, receivingProposals []*Proposal
-	for keyWithoutParty, defaultCPty := range keyWithoutPartyToDefaultCPty {
+	for keyWithoutParty, defaultCPty = range keyWithoutPartyToDefaultCPty {
 		key = fmt.Sprintf("%s_%s", defaultCPty, keyWithoutParty)
-		target = handler.EventGenerator.KeyToNotional[key]
+		target = keyToNotional[key]
 
 		proposals = handler.EventGenerator.KeyToProposals[key]
 		proposals = filterProposalsByActionType(proposals, ADD)
@@ -133,48 +127,6 @@ func (handler *MainHandler) GenerateProposals() error {
 	return nil
 }
 
-func (eventGenerator *EventGenerator) minimizeNoOfTrades(key string) {
-	proposals := eventGenerator.KeyToProposals[key]
-	pendingProposals := filterProposalsByActionType(proposals, PENDING)
-
-	addedSum := sumAddedProposalsNotional(proposals)
-	target := eventGenerator.KeyToNotional[key] - addedSum
-	pendingProposals = sortProposalsByNotional(pendingProposals, false)
-	proposalsToKeep := findNSum(pendingProposals, target)
-
-	if target == 0 {
-		return
-	}
-
-	var payOrReceive, cPty string
-	if proposalsToKeep != nil {
-		for _, proposalToKeep := range proposalsToKeep {
-			eventGenerator.changeActionType(proposalToKeep.CCPTradeID, KEEP)
-		}
-		proposalsToCancel := filterProposalsByActionType(proposals, PENDING)
-		for _, proposalToCancel := range proposalsToCancel {
-			eventGenerator.changeActionType(proposalToCancel.CCPTradeID, CANCEL)
-		}
-	} else {
-		for _, pendingProposal := range pendingProposals {
-			eventGenerator.changeActionType(pendingProposal.CCPTradeID, CANCEL)
-		}
-
-		if target > 0 {
-			payOrReceive = "R"
-		} else {
-			payOrReceive = "P"
-		}
-
-		cPty = eventGenerator.KeyWithoutPartyToDefaultCPty[fmt.Sprintf(KEY_WITHOUT_PARTY_FORMAT, proposals[0].Currency, proposals[0].MaturityDate)]
-		eventGenerator.addPairedProposalsForNewTrade(
-			proposals[0].Party, payOrReceive, proposals[0].Currency,
-			proposals[0].MaturityDate, cPty, uint64(abs(target)))
-	}
-
-	return
-}
-
 func (eventGenerator *EventGenerator) minimizeNotionalRecursively(payingProposals []*Proposal, receivingProposals []*Proposal, amount uint64, payOrReceive string, originalCPty string) {
 	if amount == 0 {
 		return
@@ -189,6 +141,15 @@ func (eventGenerator *EventGenerator) minimizeNotionalRecursively(payingProposal
 
 	for i := 0; i < len(eligibleProposals); i++ {
 		if eligibleProposals[i].Notional >= amount {
+
+			// if the notional is equal to the required amount, but there are still extra trades left
+			if eligibleProposals[i].Notional == amount {
+				extra := sumProposalsNotional(eligibleProposals[i+1:])
+				if extra != 0 {
+					amount -= extra
+				}
+			}
+
 			remaining := eligibleProposals[i].Notional - amount
 			if len(originalCPty) > 0 {
 				eventGenerator.changeCPty(eligibleProposals[i].CCPTradeID, eligibleProposals[i].Cpty, originalCPty)
@@ -207,12 +168,6 @@ func (eventGenerator *EventGenerator) minimizeNotionalRecursively(payingProposal
 				eventGenerator.changeCPty(eligibleProposals[i].CCPTradeID, eligibleProposals[i].Cpty, originalCPty)
 			}
 		}
-	}
-}
-
-func (eventGenerator *EventGenerator) changeActionType(ccpTradeID string, newActionType ActionType) {
-	for _, proposal := range eventGenerator.CcpTradeIDToProposals[ccpTradeID] {
-		proposal.Action = newActionType
 	}
 }
 
@@ -250,34 +205,6 @@ func (eventGenerator *EventGenerator) changeCPty(ccpTradeID string, party string
 	eventGenerator.CcpTradeIDToProposals[ccpTradeID] = newProposals
 }
 
-//func (handler *MainHandler) prepareDetailsForNewTrades() {
-//	partyToNewTradeIndex := make(map[string]uint32)
-//	var newCcpTradeIndex uint32 = 0
-//
-//	var index, ccpIndex int
-//	var err error
-//	for party, rawTrades := range handler.PortfolioLoader.PartyToRawTrades {
-//		for _, rawTrade := range rawTrades {
-//			if len(rawTrade.CCPTradeID) > len(CCPTRADEID_PREFIX) {
-//				ccpIndex, err = strconv.Atoi(rawTrade.CCPTradeID[len(CCPTRADEID_PREFIX):])
-//				if err == nil {
-//					newCcpTradeIndex = max(newCcpTradeIndex, uint32(ccpIndex)+1)
-//				}
-//			}
-//
-//			if len(rawTrade.TradeID) > len(party) {
-//				index, err = strconv.Atoi(rawTrade.TradeID[len(party):])
-//				if err == nil {
-//					partyToNewTradeIndex[party] = max(partyToNewTradeIndex[party], uint32(index)+1)
-//				}
-//			}
-//		}
-//	}
-//
-//	handler.EventGenerator.NewCcpTradeIndex = newCcpTradeIndex
-//	handler.EventGenerator.PartyToNewTradeIndex = partyToNewTradeIndex
-//}
-
 func createNewProposalFromTrade(trade *Trade) *Proposal {
 	return &Proposal{
 		Party:        trade.Party,
@@ -289,63 +216,8 @@ func createNewProposalFromTrade(trade *Trade) *Proposal {
 		Cpty:         trade.Cpty,
 		CCPTradeID:   trade.CCPTradeID,
 		Notional:     trade.Notional,
-		Action:       PENDING,
+		Action:       CANCEL,
 	}
-}
-
-func findNSum(sortedProposals []*Proposal, target int) []*Proposal {
-	if target == 0 {
-		return nil
-	}
-
-	n := len(sortedProposals)
-	if n == 0 {
-		return nil
-	}
-	if n == 1 {
-		if target == getProposalNotionalAsInt(sortedProposals[0]) {
-			return []*Proposal{sortedProposals[0]}
-		} else {
-			return nil
-		}
-	}
-
-	if n == 2 {
-		l, r := 0, len(sortedProposals)-1
-		var sum int
-
-		for l < r {
-			sum = getProposalNotionalAsInt(sortedProposals[l]) + getProposalNotionalAsInt(sortedProposals[r])
-			if sum == target {
-				return []*Proposal{sortedProposals[l], sortedProposals[r]}
-			}
-			if sum < target {
-				l++
-			} else {
-				r--
-			}
-		}
-
-		return nil
-	}
-
-	for i := 0; i < len(sortedProposals)-2; i++ {
-		if i == 0 || (i > 0 && sortedProposals[i-1].Notional != sortedProposals[i].Notional) {
-			res := findNSum(sortedProposals[i+1:], target-getProposalNotionalAsInt(sortedProposals[i]))
-			if res != nil {
-				return append(res, sortedProposals[i])
-			}
-		}
-	}
-
-	return nil
-}
-
-func getProposalNotionalAsInt(proposal *Proposal) int {
-	if proposal.PayOrReceive == "P" {
-		return -int(proposal.Notional)
-	}
-	return int(proposal.Notional)
 }
 
 func filterProposalsByActionType(proposals []*Proposal, actionType ActionType) []*Proposal {
@@ -360,17 +232,11 @@ func filterProposalsByActionType(proposals []*Proposal, actionType ActionType) [
 	return result
 }
 
-func sumAddedProposalsNotional(proposals []*Proposal) int {
-	sum := 0
+func sumProposalsNotional(proposals []*Proposal) uint64 {
+	var sum uint64 = 0
 
 	for _, proposal := range proposals {
-		if proposal.Action == ADD {
-			if proposal.PayOrReceive == "P" {
-				sum -= int(proposal.Notional)
-			} else {
-				sum += int(proposal.Notional)
-			}
-		}
+		sum += proposal.Notional
 	}
 
 	return sum

@@ -74,7 +74,6 @@ type CompressionResultBookLevel struct {
 	CompressionRate  string          `csv:"CompressionRate"`
 }
 
-//TODO refactor trade into proposal?
 type Proposal struct {
 	Party        string     `csv:"Party"`
 	Book         string     `csv:"Book"`
@@ -91,10 +90,8 @@ type Proposal struct {
 type ActionType string
 
 const (
-	PENDING ActionType = "PENDING"
-	KEEP    ActionType = ""
-	CANCEL  ActionType = "CXL"
-	ADD     ActionType = "ADD"
+	CANCEL ActionType = "CXL"
+	ADD    ActionType = "ADD"
 )
 
 type DataCheckResult struct {
@@ -106,17 +103,3 @@ type DataCheckResult struct {
 	Notional         uint64 `csv:"Notional"`
 	Reduced          bool   `csv:"Reduced"`
 }
-
-//type Comparable interface {
-//	CompareTo(b Comparable) int
-//}
-//
-//func (a *RawTrade) CompareTo(b *RawTrade) int {
-//	if a.Party < b.Party {
-//		return -1
-//	}
-//	if a.Party > b.Party {
-//		return 1
-//	}
-//	return 0
-//}

@@ -9,14 +9,13 @@ import (
 )
 
 type CompressionEngine struct {
-	CompressionResults         []*CompressionResult
+	CompressionResults          []*CompressionResult
 	BookLevelCompressionResults []*CompressionResultBookLevel
 }
 
 func (handler *MainHandler) GenerateCompressionResults() error {
 	keyToPayOrReceiveToTrades := handler.getKeyToPayOrReceiveToTrades(false)
 
-	// TODO don't repeat yourself
 	compressionResults := make([]*CompressionResult, 0)
 	var originalPayNotional, originalReceiveNotional, newPayNotional, newReceiveNotional uint64
 	var trade *Trade
@@ -25,10 +24,10 @@ func (handler *MainHandler) GenerateCompressionResults() error {
 		originalReceiveNotional = sumNotional(payOrReceiveToTrades["R"])
 
 		if originalPayNotional > originalReceiveNotional {
-			newPayNotional = originalPayNotional-originalReceiveNotional
+			newPayNotional = originalPayNotional - originalReceiveNotional
 			newReceiveNotional = 0
 		} else {
-			newReceiveNotional = originalReceiveNotional-originalPayNotional
+			newReceiveNotional = originalReceiveNotional - originalPayNotional
 			newPayNotional = 0
 		}
 
@@ -79,10 +78,10 @@ func (handler *MainHandler) GenerateBookLevelCompressionResults() error {
 		originalReceiveNotional = sumNotional(payOrReceiveToTrades["R"])
 
 		if originalPayNotional > originalReceiveNotional {
-			newPayNotional = originalPayNotional-originalReceiveNotional
+			newPayNotional = originalPayNotional - originalReceiveNotional
 			newReceiveNotional = 0
 		} else {
-			newReceiveNotional = originalReceiveNotional-originalPayNotional
+			newReceiveNotional = originalReceiveNotional - originalPayNotional
 			newPayNotional = 0
 		}
 

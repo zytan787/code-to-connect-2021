@@ -1,6 +1,5 @@
 import * as React from "react";
 import Head from "next/head";
-import Image from "next/image";
 import styles from "../styles/Home.module.css";
 import {
   Upload,
@@ -8,7 +7,6 @@ import {
   message,
   Row,
   Col,
-  Card,
   Spin,
   Tree,
   Result,
@@ -23,9 +21,9 @@ import {
 } from "@ant-design/icons";
 import { RcFile, UploadChangeParam } from "antd/es/upload";
 import { useEffect, useMemo, useState } from "react";
-import { InputFile } from "./api/compression/types";
+import { InputFile } from "../api/compression/types";
 import { useRequest } from "ahooks";
-import { compressTradesRequest } from "./api/compression/api";
+import { compressTradesRequest } from "../api/compression/api";
 import { Base64 } from "js-base64";
 import JSZip from "jszip";
 import FileSaver from "file-saver";
@@ -46,6 +44,7 @@ export default function Home() {
     undefined
   );
   const [sentCompressRequest, setSentCompressRequest] = useState(false);
+  const [preparingDownloads, setPreparingDownloads] = useState(false);
 
   const { data, error, loading, run } = useRequest(compressTradesRequest);
 
@@ -334,6 +333,7 @@ export default function Home() {
   };
 
   const downloadOutputFiles = () => {
+    setPreparingDownloads(true);
     const zip = new JSZip();
     if (outputFiles !== undefined) {
       for (let i = 0; i < outputFiles.length; i++) {
@@ -343,6 +343,7 @@ export default function Home() {
       }
       zip.generateAsync({ type: "blob" }).then(function (content) {
         FileSaver.saveAs(content, "output.zip");
+        setPreparingDownloads(false);
       });
     }
   };
@@ -389,14 +390,6 @@ export default function Home() {
               </Col>
             </Row>
           </div>
-          {/*<Upload*/}
-          {/*  beforeUpload={checkFileType}*/}
-          {/*  multiple={true}*/}
-          {/*  onChange={onUploadFileStatusChange}*/}
-          {/*  onRemove={onRemove}*/}
-          {/*>*/}
-          {/*  <Button icon={<UploadOutlined />}>Click to Upload</Button>*/}
-          {/*</Upload>*/}
         </Col>
         <Col span={4}>
           <Button
@@ -440,6 +433,7 @@ export default function Home() {
                     disabled={
                       checkedKeys === undefined || checkedKeys.length === 0
                     }
+                    loading={preparingDownloads}
                   >
                     Download
                   </Button>
@@ -524,24 +518,6 @@ export default function Home() {
           </Row>
         </>
       )}
-
-      {/*<footer className={styles.footer}>*/}
-      {/*  <a*/}
-      {/*    href="https://bankcampuscareers.tal.net/vx/mobile-0/brand-0/candidate/so/pm/1/pl/2/opp/7182-APAC-Code-to-Connect-2021/en-GB"*/}
-      {/*    target="_blank"*/}
-      {/*    rel="noopener noreferrer"*/}
-      {/*  >*/}
-      {/*    <span className={styles.logo}>*/}
-      {/*      <Image*/}
-      {/*        src="/boa.png"*/}
-      {/*        alt="Bank of America Logo"*/}
-      {/*        width={16}*/}
-      {/*        height={16}*/}
-      {/*      />*/}
-      {/*    </span>*/}
-      {/*    FICC - Code to Connect 2021*/}
-      {/*  </a>*/}
-      {/*</footer>*/}
     </div>
   );
 }

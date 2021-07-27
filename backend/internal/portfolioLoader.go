@@ -3,6 +3,7 @@ package internal
 import (
 	"encoding/base64"
 	"fmt"
+	"github.com/araddon/dateparse"
 	"github.com/gocarina/gocsv"
 	"github.com/zytan787/code-to-connect-2021/api"
 	"sort"
@@ -12,15 +13,11 @@ import (
 )
 
 type PortfolioLoader struct {
-	//PartyToRawTrades               map[string][]*RawTrade
 	CcpTradeIDToCompressibleTrades map[string][]*Trade
-	//TODO one more field to keep track party -> trades?
-	ExcludedTrades []*ExcludedTrade
+	ExcludedTrades                 []*ExcludedTrade
 }
 
 func (handler *MainHandler) DecodeInputFiles(inputFiles []api.File) ([]*RawTrade, error) {
-	gocsv.FailIfUnmatchedStructTags = true
-
 	result := make([]*RawTrade, 0)
 
 	var fileBytes []byte
@@ -43,21 +40,10 @@ func (handler *MainHandler) DecodeInputFiles(inputFiles []api.File) ([]*RawTrade
 }
 
 func (handler *MainHandler) LoadPortfolio(rawTrades []*RawTrade) {
-	//handler.PortfolioLoader.PartyToRawTrades = groupRawTradesByParty(rawTrades)
 	ccpTradeIDToCompressibleTrades, excludedTrades := categorizeRawTrades(rawTrades)
 
 	handler.PortfolioLoader.CcpTradeIDToCompressibleTrades = ccpTradeIDToCompressibleTrades
 	handler.PortfolioLoader.ExcludedTrades = excludedTrades
-}
-
-func groupRawTradesByParty(allRawTrades []*RawTrade) map[string][]*RawTrade {
-	partyToRawTrades := make(map[string][]*RawTrade)
-
-	for _, rawTrade := range allRawTrades {
-		partyToRawTrades[rawTrade.Party] = append(partyToRawTrades[rawTrade.Party], rawTrade)
-	}
-
-	return partyToRawTrades
 }
 
 func categorizeRawTrades(rawTrades []*RawTrade) (ccpTradeIDToCompressibleTrades map[string][]*Trade, excludedTrades []*ExcludedTrade) {
@@ -84,7 +70,6 @@ func categorizeRawTrades(rawTrades []*RawTrade) (ccpTradeIDToCompressibleTrades 
 			if err == nil {
 				compressible = true
 			}
-			//TODO add error to raw trade?
 		}
 
 		if compressible {
@@ -183,15 +168,17 @@ func cleanRawTrade(rawTrade *RawTrade) (*Trade, error) {
 	notional, err := strconv.Atoi(rawTrade.Notional)
 	if err != nil {
 		errors = append(errors, fmt.Sprintf("Notional %s is not a valid integer", rawTrade.Notional))
+	} else if notional < 0 {
+		errors = append(errors, fmt.Sprintf("Notional %s is a negative value", rawTrade.Notional))
 	}
 
 	if rawTrade.PayOrReceive != "P" && rawTrade.PayOrReceive != "R" {
 		errors = append(errors, fmt.Sprintf("PayOrReceive %s is neither 'P' or 'R'", rawTrade.PayOrReceive))
 	}
 
-	maturityDate, err := time.Parse(DATE_FORMAT, rawTrade.MaturityDate)
+	maturityDate, err := dateparse.ParseAny(rawTrade.MaturityDate)
 	if err != nil {
-		errors = append(errors, fmt.Sprintf("fail to parse MaturityDate %s with format of YYYY/MM/DD (%s)", rawTrade.MaturityDate, DATE_FORMAT))
+		errors = append(errors, fmt.Sprintf("fail to parse MaturityDate %s, date is invalid", rawTrade.MaturityDate))
 	}
 
 	if len(errors) > 0 {
