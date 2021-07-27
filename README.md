@@ -14,6 +14,7 @@
 2. Create a file `.env.local` in the `frontend` directory.
 3. Write this line in the file created above `BACKEND_HOST=http://localhost:8080`.
 4. Open a terminal and cd into the `frontend` directory.
-5. Run this command: `yarn build`.
-6. After it is done, run `yarn start`.
-7. The process should be running and listening to port 3000.
+5. Run `yarn install`.
+6. Run `yarn build`.
+7. After it is done, run `yarn start`.
+8. The process should be running and listening to port 3000.
