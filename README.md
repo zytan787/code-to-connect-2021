@@ -1,6 +1,8 @@
 # code-to-connect-2021
 ## FICC - Trade Compression
 
+Clone this repository, then:
+
 ### 1. Backend
 1. Install golang https://golang.org/doc/install.
 2. Create a file `.env` in the `backend` directory.
